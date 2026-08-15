@@ -1,0 +1,6 @@
+<resources>
+    <style name="Theme.SchoolSaaS" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#315CFF</item>
+    </style>
+</resources>

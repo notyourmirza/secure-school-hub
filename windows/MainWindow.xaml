@@ -1,0 +1,54 @@
+<Window x:Class="SchoolSaaS.Desktop.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="School SaaS" Width="1200" Height="760" WindowStartupLocation="CenterScreen">
+  <Grid Background="#F5F7FB">
+    <Grid.ColumnDefinitions><ColumnDefinition Width="240"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+    <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto"><StackPanel Background="#172033" Padding="20">
+      <TextBlock Text="SCHOOL SAAS" Foreground="White" FontSize="20" FontWeight="Bold" Margin="0,0,0,28"/>
+      <Button Content="Dashboard" Tag="dashboard" Click="Navigate_Click" Margin="0,3" Padding="12"/>
+      <Button Content="Students" Tag="students" Click="Navigate_Click" Margin="0,3" Padding="12"/>
+      <Button Content="Teachers" Tag="teachers" Click="Navigate_Click" Margin="0,3" Padding="12"/>
+      <Button Content="Employees" Tag="employees" Click="Navigate_Click" Margin="0,3" Padding="12"/>
+      <Button Content="Classes" Tag="classes" Click="Navigate_Click" Margin="0,3" Padding="12"/>
+      <Button Content="Subjects" Tag="subjects" Click="Navigate_Click" Margin="0,3" Padding="12"/>
+      <Button Content="Attendance" Tag="attendance" Click="Navigate_Click" Margin="0,3" Padding="12"/>
+      <Button Content="Timetable" Tag="timetable" Click="Navigate_Click" Margin="0,3" Padding="12"/>
+      <Button Content="Fees" Tag="fees" Click="Navigate_Click" Margin="0,3" Padding="12"/>
+      <Button Content="Fee Structures" Tag="fee-structures" Click="Navigate_Click" Margin="0,3" Padding="12"/>
+      <Button Content="Payments" Tag="payments" Click="Navigate_Click" Margin="0,3" Padding="12"/>
+      <Button Content="Expenses" Tag="expenses" Click="Navigate_Click" Margin="0,3" Padding="12"/>
+      <Button Content="Exams" Tag="exams" Click="Navigate_Click" Margin="0,3" Padding="12"/>
+      <Button Content="Exam Subjects" Tag="exam-subjects" Click="Navigate_Click" Margin="0,3" Padding="12"/>
+      <Button Content="Marks" Tag="marks" Click="Navigate_Click" Margin="0,3" Padding="12"/>
+      <Button Content="Results" Tag="results" Click="Navigate_Click" Margin="0,3" Padding="12"/>
+      <Button Content="Payroll" Tag="payroll-runs" Click="Navigate_Click" Margin="0,3" Padding="12"/>
+      <Button Content="Payroll Items" Tag="payroll-items" Click="Navigate_Click" Margin="0,3" Padding="12"/>
+      <Button Content="Library" Tag="library-books" Click="Navigate_Click" Margin="0,3" Padding="12"/>
+      <Button Content="Library Loans" Tag="library-loans" Click="Navigate_Click" Margin="0,3" Padding="12"/>
+      <Button Content="Transport" Tag="transport-routes" Click="Navigate_Click" Margin="0,3" Padding="12"/>
+      <Button Content="Transport Assignments" Tag="transport-assignments" Click="Navigate_Click" Margin="0,3" Padding="12"/>
+      <Button Content="Notices" Tag="notices" Click="Navigate_Click" Margin="0,3" Padding="12"/>
+      <Button Content="Reports" Tag="reports" Click="Navigate_Click" Margin="0,3" Padding="12"/>
+      <Button Content="Sync Center" Tag="sync" Click="Sync_Click" Margin="0,10,0,3" Padding="12"/>
+    </StackPanel></ScrollViewer>
+    <Grid Grid.Column="1" Margin="28">
+      <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+      <TextBlock x:Name="ModuleTitle" Text="School Dashboard" FontSize="30" FontWeight="SemiBold" Foreground="#172033"/>
+      <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,24,0,18">
+        <TextBox x:Name="EmailBox" Width="240" Margin="0,0,8,0" Text="admin@example.com"/>
+        <PasswordBox x:Name="PasswordBox" Width="180" Margin="0,0,8,0"/>
+        <Button Content="Login" Click="Login_Click" Padding="18,8"/>
+        <Button Content="Refresh Records" Click="RefreshModule_Click" Padding="18,8" Margin="8,0,0,0"/>
+      </StackPanel>
+      <TextBlock x:Name="StatusText" Grid.Row="2" Margin="0,0,0,10" Foreground="#536176"/>
+      <ScrollViewer Grid.Row="3" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" Margin="0,4,0,10">
+        <StackPanel x:Name="FormPanel" Orientation="Horizontal">
+          <StackPanel Margin="0,0,10,0"><TextBlock Text="Record ID" FontSize="11" Foreground="#536176"/><TextBox x:Name="RecordIdBox" Width="90" ToolTip="Select a row or enter an ID for update/delete" /></StackPanel>
+          <StackPanel x:Name="FieldPanel" Orientation="Horizontal" />
+          <Button Content="Create / Queue" Click="Create_Click" Padding="14,7" Margin="12,18,6,0" />
+          <Button Content="Update / Queue" Click="Update_Click" Padding="14,7" Margin="0,18,6,0" />
+          <Button Content="Delete / Queue" Click="Delete_Click" Padding="14,7" Margin="0,18,0,0" />
+        </StackPanel>
+      </ScrollViewer>
+      <DataGrid x:Name="RecordsGrid" Grid.Row="4" AutoGenerateColumns="True" IsReadOnly="True" SelectionChanged="RecordsGrid_SelectionChanged"/>
+    </Grid>
+  </Grid>
+</Window>
