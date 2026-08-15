@@ -1,0 +1,152 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Least privilege by default; jobs opt into more when they need it.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  website:
+    name: Website (PHP + MySQL)
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: school_saas
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s --health-timeout=5s --health-retries=15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: pdo_mysql, mbstring
+          coverage: none
+
+      - name: Lint every PHP file
+        run: |
+          set -euo pipefail
+          find website -name '*.php' -print0 | xargs -0 -n1 -P4 php -l
+
+      - name: Apply migrations
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: '3306'
+          DB_DATABASE: school_saas
+          DB_USERNAME: root
+          DB_PASSWORD: root
+          APP_ENV: testing
+          APP_KEY: ci-only-not-a-real-secret
+        run: php website/tools/migrate.php
+
+      - name: Re-run migrations (idempotency + checksum guard)
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: '3306'
+          DB_DATABASE: school_saas
+          DB_USERNAME: root
+          DB_PASSWORD: root
+          APP_ENV: testing
+          APP_KEY: ci-only-not-a-real-secret
+        run: php website/tools/migrate.php
+
+      - name: Schema smoke check
+        run: |
+          mysql -h 127.0.0.1 -uroot -proot school_saas -e "
+            SELECT table_name FROM information_schema.tables
+            WHERE table_schema='school_saas'
+              AND table_name IN ('users','students','attendance','rate_limits','login_attempts','audit_logs');" |
+          tee /tmp/tables.txt
+          for t in users students attendance rate_limits login_attempts audit_logs; do
+            grep -qx "$t" /tmp/tables.txt || { echo "Missing table: $t"; exit 1; }
+          done
+
+  security-checks:
+    name: Security checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          coverage: none
+
+      - name: Fail on dangerous PHP constructs
+        run: |
+          set -euo pipefail
+          # Direct code execution / shell sinks must never appear in app code.
+          if grep -rnE '\b(eval|exec|shell_exec|passthru|system|popen|proc_open|assert)\s*\(' website --include='*.php'; then
+            echo "::error::Dangerous PHP function detected"; exit 1
+          fi
+          # Every SQL statement must be prepared; no string-built queries.
+          if grep -rnE '->(query|exec)\s*\(\s*["'\''].*\$' website --include='*.php'; then
+            echo "::error::Interpolated SQL detected; use prepared statements"; exit 1
+          fi
+          # Unescaped output in admin templates.
+          if grep -rnE '<\?=\s*\$_(GET|POST|REQUEST|COOKIE)' website --include='*.php'; then
+            echo "::error::Unescaped superglobal echoed to HTML"; exit 1
+          fi
+
+      - name: Ensure no committed secrets or env files
+        run: |
+          set -euo pipefail
+          if git ls-files | grep -E '(^|/)\.env($|\.)|website/config\.local\.php'; then
+            echo "::error::Environment file committed"; exit 1
+          fi
+          if grep -rnE '(password|secret|api[_-]?key)\s*=\s*["'\''][A-Za-z0-9!@#$%^&*_-]{12,}' \
+              website android windows --include='*.php' --include='*.kt' --include='*.cs' \
+              | grep -v 'example' ; then
+            echo "::error::Hardcoded credential detected"; exit 1
+          fi
+
+      - name: Ensure clients do not use cleartext HTTP
+        run: |
+          set -euo pipefail
+          if grep -rnE 'http://(?!localhost|127\.0\.0\.1|10\.0\.2\.2|schemas\.|www\.w3\.org)' -P android windows \
+              --include='*.kt' --include='*.cs' --include='*.xml' --include='*.kts'; then
+            echo "::error::Cleartext HTTP endpoint in a client app"; exit 1
+          fi
+
+  android:
+    name: Android (Kotlin)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Assemble debug
+        working-directory: android
+        run: |
+          if [ -x ./gradlew ]; then ./gradlew assembleDebug --no-daemon --stacktrace;
+          else echo "No Gradle wrapper committed; skipping build."; fi
+
+  windows-app:
+    name: Windows (.NET)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Build desktop client
+        working-directory: windows
+        run: dotnet build SchoolSaaS.Desktop.csproj -c Release --nologo
