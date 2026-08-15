@@ -43,7 +43,7 @@ final class ModuleRouter
         $user = Auth::requirePermission($db, $config['permission'] . '.' . self::actionFor($method), null);
         $id = $matches[2] ?? null;
         $table = $config['table'];
-        $schoolId = (int)$user['school_id'];
+        $schoolId = Auth::tenantId($user);
 
         if ($method === 'GET') {
             if ($id !== null) {
@@ -65,6 +65,7 @@ final class ModuleRouter
             $stmt = $db->prepare("DELETE FROM {$table} WHERE id = :id AND school_id = :school_id");
             $stmt->execute(['id' => $id, 'school_id' => $schoolId]);
             if ($stmt->rowCount() !== 1) Response::error('Record not found', 'NOT_FOUND', 404);
+            Auth::audit($db, $user, 'delete', $slug, (string)$id);
             Response::json(true, 'Record deleted');
         }
 
@@ -91,11 +92,14 @@ final class ModuleRouter
                 $stmt->execute($values);
             } catch (Throwable $e) {
                 if ($db->inTransaction()) $db->rollBack();
+                error_log('Record create failed for ' . $slug . ': ' . $e->getMessage());
                 Response::error('Record could not be created', 'DATABASE_CONSTRAINT', 409);
             }
             if ($db->inTransaction()) $db->commit();
-            self::finishDomainCreate($db, $slug, (int)$db->lastInsertId(), $values, $schoolId);
-            Response::json(true, 'Record created', ['id' => (int)$db->lastInsertId()], 201);
+            $newId = (int)$db->lastInsertId();
+            self::finishDomainCreate($db, $slug, $newId, $values, $schoolId);
+            Auth::audit($db, $user, 'create', $slug, (string)$newId);
+            Response::json(true, 'Record created', ['id' => $newId], 201);
         }
 
         if ($id === null || !$values) Response::error('Record id and update fields are required', 'VALIDATION_ERROR', 422);
@@ -106,8 +110,9 @@ final class ModuleRouter
         try {
             $stmt = $db->prepare("UPDATE {$table} SET " . implode(',', $sets) . " WHERE id = :id AND school_id = :school_id");
             $stmt->execute($values);
-        } catch (Throwable $e) { Response::error('Record could not be updated', 'DATABASE_CONSTRAINT', 409); }
+        } catch (Throwable $e) { error_log('Record update failed for ' . $slug . ': ' . $e->getMessage()); Response::error('Record could not be updated', 'DATABASE_CONSTRAINT', 409); }
         if ($stmt->rowCount() === 0) Response::error('Record not found or unchanged', 'NOT_FOUND', 404);
+        Auth::audit($db, $user, 'update', $slug, (string)$id);
         Response::json(true, 'Record updated');
         return true;
     }

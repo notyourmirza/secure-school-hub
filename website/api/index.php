@@ -54,6 +54,18 @@ try {
         exit;
     }
 
+    // Coarse global limiter; sensitive endpoints add their own tighter bucket.
+    if (!RateLimiter::hit($db, 'api-ip', client_ip(), 300, 60)) {
+        Response::error('Too many requests; try again shortly', 'RATE_LIMITED', 429);
+    }
+
+    if ($method === 'POST' && $path === '/api/v1/auth/logout') {
+        $user = Auth::requireUser($db);
+        Auth::revokeToken($db, Auth::bearerToken());
+        Auth::audit($db, $user, 'logout', 'user', (string)$user['id']);
+        Response::json(true, 'Logged out');
+    }
+
     if ($method === 'GET' && $path === '/api/v1/health') {
         Response::json(true, 'API is healthy', ['database' => 'connected']);
     }
@@ -287,7 +299,9 @@ try {
             if ($admissionNo === '' || $firstName === '') Response::error('admission_no and first_name are required', 'VALIDATION_ERROR', 422);
             $stmt = $db->prepare('INSERT INTO students (uuid, school_id, admission_no, first_name, last_name, gender, date_of_birth, phone, address) VALUES (:uuid, :school_id, :admission_no, :first_name, :last_name, :gender, :date_of_birth, :phone, :address)');
             $stmt->execute(['uuid' => uuid_v4(), 'school_id' => $user['school_id'], 'admission_no' => $admissionNo, 'first_name' => $firstName, 'last_name' => $body['last_name'] ?? null, 'gender' => $body['gender'] ?? null, 'date_of_birth' => $body['date_of_birth'] ?? null, 'phone' => $body['phone'] ?? null, 'address' => $body['address'] ?? null]);
-            Response::json(true, 'Student created successfully', ['id' => (int)$db->lastInsertId()], 201);
+            $newId = (int)$db->lastInsertId();
+            Auth::audit($db, $user, 'create', 'students', (string)$newId);
+            Response::json(true, 'Student created successfully', ['id' => $newId], 201);
         }
     }
 
