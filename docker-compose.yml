@@ -1,0 +1,40 @@
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_DATABASE: school_saas
+      MYSQL_USER: school_saas
+      MYSQL_PASSWORD: change-me
+      MYSQL_ROOT_PASSWORD: root-change-me
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./backend/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "school_saas", "-pchange-me"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    image: php:8.3-cli
+    working_dir: /app/backend
+    command: php -S 0.0.0.0:8080 -t public public/index.php
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: school_saas
+      DB_USER: school_saas
+      DB_PASSWORD: change-me
+      APP_ORIGINS: http://localhost:3000
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./:/app
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+volumes:
+  mysql_data:
