@@ -101,6 +101,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         $fields[] = 'school_id';
         $values['school_id'] = $schoolId;
+        // Tables carrying a NOT NULL uuid column get a server-generated value.
+        if (in_array($cfg['table'], ['students','teachers','attendance','notices','fee_invoices','admissions'], true)) {
+            $fields[] = 'uuid';
+            $values['uuid'] = uuid_v4();
+        }
         try {
             $placeholders = array_map(static fn (string $f): string => ':' . $f, $fields);
             $stmt = db()->prepare('INSERT INTO ' . $cfg['table'] . ' (' . implode(',', $fields) . ') VALUES (' . implode(',', $placeholders) . ')');
