@@ -1,25 +1,46 @@
 <?php
 declare(strict_types=1);
 
-require_once __DIR__ . '/../src/Config/config.php';
-require_once __DIR__ . '/../src/Database/Database.php';
-require_once __DIR__ . '/../src/Http/Response.php';
-require_once __DIR__ . '/../src/Auth/Auth.php';
-require_once __DIR__ . '/../src/Support/RateLimiter.php';
-require_once __DIR__ . '/../src/Http/ModuleRouter.php';
-require_once __DIR__ . '/../src/Http/TeacherRouter.php';
+require_once __DIR__ . '/../config.php';
+require_once __DIR__ . '/../database.php';
+require_once __DIR__ . '/Response.php';
+require_once __DIR__ . '/../auth.php';
+require_once __DIR__ . '/ModuleRouter.php';
+require_once __DIR__ . '/TeacherRouter.php';
 
 use SchoolSaaS\Auth\Auth;
 use SchoolSaaS\Database\Database;
 use SchoolSaaS\Http\Response;
 use SchoolSaaS\Support\RateLimiter;
+use SchoolSaaS\Support\LoginThrottle;
 use SchoolSaaS\Http\ModuleRouter;
 use SchoolSaaS\Http\TeacherRouter;
 
 header('Content-Type: application/json; charset=utf-8');
-header('X-Content-Type-Options: nosniff');
-header('X-Frame-Options: DENY');
-header('Referrer-Policy: no-referrer');
+send_security_headers('api');
+apply_cors_policy();
+
+/** Reads and size-limits a JSON request body. */
+function json_body(): array
+{
+    $raw = file_get_contents('php://input');
+    if ($raw === false || $raw === '') {
+        return [];
+    }
+    if (strlen($raw) > MAX_JSON_BODY_BYTES) {
+        Response::error('Request body is too large', 'PAYLOAD_TOO_LARGE', 413);
+    }
+    $decoded = json_decode($raw, true);
+    if (!is_array($decoded)) {
+        Response::error('A JSON object body is required', 'VALIDATION_ERROR', 422);
+    }
+    return $decoded;
+}
+
+function client_ip(): string
+{
+    return substr((string)($_SERVER['REMOTE_ADDR'] ?? 'unknown'), 0, 45);
+}
 
 $method = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
@@ -38,22 +59,30 @@ try {
     }
 
     if ($method === 'POST' && $path === '/api/v1/auth/login') {
-        RateLimiter::check('login:' . ($_SERVER['REMOTE_ADDR'] ?? 'unknown'), 8, 60);
-        $body = json_decode(file_get_contents('php://input'), true) ?: [];
-        $email = trim((string)($body['email'] ?? ''));
+        if (!RateLimiter::hit($db, 'login-ip', client_ip(), 10, 60)) {
+            Response::error('Too many requests; try again shortly', 'RATE_LIMITED', 429);
+        }
+        $body = json_body();
+        $email = strtolower(clamp_text($body['email'] ?? '', MAX_EMAIL_LENGTH));
         $password = (string)($body['password'] ?? '');
-        if ($email === '' || $password === '') {
+        if ($email === '' || $password === '' || strlen($password) > 512 || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
             Response::error('Email and password are required', 'VALIDATION_ERROR', 422);
+        }
+        if (LoginThrottle::blocked($db, $email, client_ip())) {
+            Response::error('Too many failed sign-in attempts; try again later', 'RATE_LIMITED', 429);
         }
         $stmt = $db->prepare('SELECT u.*, r.name AS role_name, s.uuid AS school_uuid, s.name AS school_name, s.status AS school_status FROM users u JOIN roles r ON r.id = u.role_id LEFT JOIN schools s ON s.id = u.school_id WHERE u.email = :email AND u.status = "active" LIMIT 1');
         $stmt->execute(['email' => $email]);
         $user = $stmt->fetch();
-        if (!$user || !password_verify($password, $user['password_hash'])) {
+        if (!$user || !password_verify($password, (string)$user['password_hash'])) {
+            LoginThrottle::record($db, $email, client_ip(), false);
             Response::error('Invalid credentials', 'AUTH_INVALID', 401);
         }
+        LoginThrottle::record($db, $email, client_ip(), true);
         if ($user['school_id'] !== null && !in_array($user['school_status'], ['trial', 'active'], true)) {
             Response::error('School account is not active', 'SCHOOL_INACTIVE', 403);
         }
+        Auth::audit($db, $user, 'login', 'user', (string)$user['id']);
         $plainToken = bin2hex(random_bytes(32));
         $tokenHash = hash('sha256', $plainToken);
         $expires = (new DateTimeImmutable('+8 hours'))->format('Y-m-d H:i:s');
@@ -65,12 +94,15 @@ try {
         $refreshPlain = bin2hex(random_bytes(32));
         $refreshExpires = (new DateTimeImmutable('+30 days'))->format('Y-m-d H:i:s');
         $refresh = $db->prepare('INSERT INTO refresh_tokens (user_id, token_hash, family_uuid, expires_at) VALUES (:user_id, :token_hash, :family_uuid, :expires_at)');
-        $refresh->execute(['user_id' => $user['id'], 'token_hash' => hash('sha256', $refreshPlain), 'family_uuid' => uuid(), 'expires_at' => $refreshExpires]);
+        $refresh->execute(['user_id' => $user['id'], 'token_hash' => hash('sha256', $refreshPlain), 'family_uuid' => uuid_v4(), 'expires_at' => $refreshExpires]);
         Response::json(true, 'Login successful', ['token' => $plainToken, 'refresh_token' => $refreshPlain, 'expires_at' => $expires, 'user' => ['uuid' => $user['uuid'], 'name' => $user['name'], 'email' => $user['email'], 'role' => $user['role_name'], 'school' => $user['school_name'], 'school_uuid' => $user['school_uuid'], 'permissions' => $permissions]]);
     }
 
     if ($method === 'POST' && $path === '/api/v1/auth/refresh') {
-        $body = json_decode(file_get_contents('php://input'), true) ?: [];
+        if (!RateLimiter::hit($db, 'refresh-ip', client_ip(), 30, 60)) {
+            Response::error('Too many requests; try again shortly', 'RATE_LIMITED', 429);
+        }
+        $body = json_body();
         $refreshPlain = trim((string)($body['refresh_token'] ?? ''));
         if ($refreshPlain === '') Response::error('refresh_token is required', 'VALIDATION_ERROR', 422);
         $stmt = $db->prepare('SELECT r.*, u.uuid, u.name, u.email, u.school_id, u.role_id, ro.name AS role_name, s.uuid AS school_uuid, s.name AS school_name FROM refresh_tokens r JOIN users u ON u.id = r.user_id JOIN roles ro ON ro.id = u.role_id LEFT JOIN schools s ON s.id = u.school_id WHERE r.token_hash = :token_hash AND r.revoked_at IS NULL AND r.expires_at > NOW() AND u.status = "active" LIMIT 1');
@@ -94,7 +126,7 @@ try {
 
     if ($method === 'POST' && $path === '/api/v1/sync/push') {
         $user = Auth::requireUser($db);
-        $body = json_decode(file_get_contents('php://input'), true) ?: [];
+        $body = json_body();
         $operations = $body['operations'] ?? [];
         if (!is_array($operations) || count($operations) > 100) {
             Response::error('operations must be an array with at most 100 items', 'VALIDATION_ERROR', 422);
@@ -249,12 +281,12 @@ try {
         }
         if ($method === 'POST') {
             Auth::requirePermission($db, 'students.create', $user);
-            $body = json_decode(file_get_contents('php://input'), true) ?: [];
+            $body = json_body();
             $admissionNo = trim((string)($body['admission_no'] ?? ''));
             $firstName = trim((string)($body['first_name'] ?? ''));
             if ($admissionNo === '' || $firstName === '') Response::error('admission_no and first_name are required', 'VALIDATION_ERROR', 422);
             $stmt = $db->prepare('INSERT INTO students (uuid, school_id, admission_no, first_name, last_name, gender, date_of_birth, phone, address) VALUES (:uuid, :school_id, :admission_no, :first_name, :last_name, :gender, :date_of_birth, :phone, :address)');
-            $stmt->execute(['uuid' => uuid(), 'school_id' => $user['school_id'], 'admission_no' => $admissionNo, 'first_name' => $firstName, 'last_name' => $body['last_name'] ?? null, 'gender' => $body['gender'] ?? null, 'date_of_birth' => $body['date_of_birth'] ?? null, 'phone' => $body['phone'] ?? null, 'address' => $body['address'] ?? null]);
+            $stmt->execute(['uuid' => uuid_v4(), 'school_id' => $user['school_id'], 'admission_no' => $admissionNo, 'first_name' => $firstName, 'last_name' => $body['last_name'] ?? null, 'gender' => $body['gender'] ?? null, 'date_of_birth' => $body['date_of_birth'] ?? null, 'phone' => $body['phone'] ?? null, 'address' => $body['address'] ?? null]);
             Response::json(true, 'Student created successfully', ['id' => (int)$db->lastInsertId()], 201);
         }
     }
@@ -265,9 +297,4 @@ try {
     Response::error('Internal server error', 'SERVER_ERROR', 500);
 }
 
-function uuid(): string {
-    $data = random_bytes(16);
-    $data[6] = chr((ord($data[6]) & 0x0f) | 0x40);
-    $data[8] = chr((ord($data[8]) & 0x3f) | 0x80);
-    return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($data), 4));
-}
+
