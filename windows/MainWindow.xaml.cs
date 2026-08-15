@@ -52,10 +52,42 @@ public partial class MainWindow : Window
         ["reports"] = [new("report_type", "Report type", Options: ["attendance", "fees", "expenses", "results", "payroll", "enrollment"], Required: true), new("filters", "Filters JSON", "multiline")]
     };
 
+    /// <summary>
+    /// Resolves the API base URL, defaulting to HTTPS. Plain HTTP is only
+    /// tolerated for loopback development hosts; any other HTTP endpoint is
+    /// rejected so credentials and tokens are never sent in the clear.
+    /// </summary>
+    private static string ResolveApiBaseUrl()
+    {
+        var configured = Environment.GetEnvironmentVariable("SCHOOL_SAAS_API_BASE_URL");
+        if (string.IsNullOrWhiteSpace(configured))
+        {
+            return "https://localhost:8443";
+        }
+
+        if (!Uri.TryCreate(configured.Trim(), UriKind.Absolute, out var uri))
+        {
+            throw new InvalidOperationException("SCHOOL_SAAS_API_BASE_URL must be an absolute URL.");
+        }
+
+        var isLoopback = uri.IsLoopback || uri.Host == "10.0.2.2";
+        if (uri.Scheme == Uri.UriSchemeHttp && !isLoopback)
+        {
+            throw new InvalidOperationException("SCHOOL_SAAS_API_BASE_URL must use HTTPS outside of loopback development.");
+        }
+
+        if (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp)
+        {
+            throw new InvalidOperationException("SCHOOL_SAAS_API_BASE_URL must use HTTP(S).");
+        }
+
+        return uri.ToString();
+    }
+
     public MainWindow()
     {
         InitializeComponent();
-        var apiBaseUrl = Environment.GetEnvironmentVariable("SCHOOL_SAAS_API_BASE_URL") ?? "http://localhost:8080";
+        var apiBaseUrl = ResolveApiBaseUrl();
         var dataDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SchoolSaaS");
         Directory.CreateDirectory(dataDirectory);
         _queue = new SyncQueue(Path.Combine(dataDirectory, "offline-sync.db"));
