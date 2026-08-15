@@ -24,10 +24,20 @@ CREATE TABLE IF NOT EXISTS login_attempts (
   KEY idx_login_attempt_ip (ip_address, attempted_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Access tokens are stored as SHA-256 digests, never in plaintext.
-ALTER TABLE api_tokens
-  ADD COLUMN IF NOT EXISTS revoked_at DATETIME NULL DEFAULT NULL,
-  ADD COLUMN IF NOT EXISTS last_used_at DATETIME NULL DEFAULT NULL;
+-- Index guards written as dynamic SQL so the migration is safe on both
+-- MySQL 8 and MariaDB (neither supports CREATE INDEX IF NOT EXISTS portably).
+SET @idx := (SELECT COUNT(*) FROM information_schema.statistics
+             WHERE table_schema = DATABASE() AND table_name = 'audit_logs'
+               AND index_name = 'idx_audit_logs_school_created');
+SET @sql := IF(@idx = 0,
+  'CREATE INDEX idx_audit_logs_school_created ON audit_logs (school_id, created_at)',
+  'DO 0');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
-CREATE INDEX IF NOT EXISTS idx_api_tokens_expiry ON api_tokens (expires_at);
-CREATE INDEX IF NOT EXISTS idx_audit_logs_school_created ON audit_logs (school_id, created_at);
+SET @idx := (SELECT COUNT(*) FROM information_schema.statistics
+             WHERE table_schema = DATABASE() AND table_name = 'access_tokens'
+               AND index_name = 'idx_access_tokens_user');
+SET @sql := IF(@idx = 0,
+  'CREATE INDEX idx_access_tokens_user ON access_tokens (user_id, revoked_at)',
+  'DO 0');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
